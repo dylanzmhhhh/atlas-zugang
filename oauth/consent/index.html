@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Atlas · Zugang für Claude</title>
+<style>
+  body { font: 16px/1.5 -apple-system, system-ui, sans-serif; background: #f4f4f2; color: #1c1c1a; margin: 0; }
+  main { max-width: 26rem; margin: 12vh auto; padding: 2rem; background: #fff; border-radius: 12px; }
+  h1 { font-size: 1.15rem; margin: 0 0 1rem; }
+  label { display: block; margin: .75rem 0 .25rem; font-size: .9rem; }
+  input { width: 100%; box-sizing: border-box; padding: .55rem .7rem; font: inherit; border: 1px solid #c9c9c4; border-radius: 8px; }
+  button { margin: 1rem .5rem 0 0; padding: .55rem 1.1rem; font: inherit; border: 0; border-radius: 999px; background: #1c1c1a; color: #fff; cursor: pointer; }
+  button.leise { background: #e6e6e1; color: #1c1c1a; }
+  #stand { min-height: 1.5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Atlas · Zugang für Claude</h1>
+  <p id="stand">Einen Moment …</p>
+
+  <form id="anmeldung" hidden>
+    <label for="email">E-Mail des Kontos «Claude»</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="passwort">Passwort</label>
+    <input id="passwort" type="password" autocomplete="current-password" required>
+    <button type="submit">Anmelden</button>
+  </form>
+
+  <div id="frage" hidden>
+    <p id="wer"></p>
+    <button id="erlauben" type="button">Zugriff erlauben</button>
+    <button id="ablehnen" type="button" class="leise">Ablehnen</button>
+  </div>
+</main>
+
+<script src="../../config.js"></script>
+<script type="module">
+  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+  const supabase = createClient(window.ATLAS.url, window.ATLAS.anonKey)
+  const id = new URLSearchParams(location.search).get('authorization_id')
+  const $ = (name) => document.getElementById(name)
+  const melde = (text) => { $('stand').textContent = text }
+
+  async function weiter() {
+    $('frage').hidden = true
+    if (!id) {
+      return melde('Diese Seite ruft nur Claude auf. Es fehlt die Kennung der Anfrage.')
+    }
+
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      $('anmeldung').hidden = false
+      return melde('Bitte mit dem Konto «Claude» anmelden.')
+    }
+    $('anmeldung').hidden = true
+
+    // Nur das Agentenkonto darf hier zustimmen. Ein Mitglied, das sich
+    // versehentlich anmeldet, bekäme sonst einen Token mit seinen Rechten.
+    // Abmelden nur lokal: Ein globales Abmelden risse die Sitzung der
+    // Mac-App mit.
+    const { data: istAgent } = await supabase.rpc('atlas_is_agent')
+    if (istAgent !== true) {
+      await supabase.auth.signOut({ scope: 'local' })
+      $('anmeldung').hidden = false
+      return melde('Das ist nicht das Konto «Claude». Zugriff nicht erlaubt.')
+    }
+
+    const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(id)
+    if (error) {
+      return melde('Die Anfrage ist abgelaufen oder ungültig: ' + error.message)
+    }
+    const client = data?.client?.name ?? data?.client?.client_name ?? 'Ein unbekannter Client'
+    $('wer').textContent = `«${client}» möchte als ${session.user.email} Leads in Atlas lesen und vorschlagen.`
+    $('frage').hidden = false
+    melde('')
+  }
+
+  async function entscheide(erlauben) {
+    const { data, error } = erlauben
+      ? await supabase.auth.oauth.approveAuthorization(id)
+      : await supabase.auth.oauth.denyAuthorization(id)
+    if (error) return melde('Das hat nicht geklappt: ' + error.message)
+    location.href = data.redirect_url ?? data.redirect_to
+  }
+
+  $('anmeldung').addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const { error } = await supabase.auth.signInWithPassword({
+      email: $('email').value, password: $('passwort').value,
+    })
+    if (error) return melde('Anmeldung fehlgeschlagen: ' + error.message)
+    weiter()
+  })
+  $('erlauben').addEventListener('click', () => entscheide(true))
+  $('ablehnen').addEventListener('click', () => entscheide(false))
+
+  weiter()
+</script>
+</body>
+</html>
