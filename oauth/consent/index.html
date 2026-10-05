@@ -73,6 +73,13 @@
     if (error) {
       return melde('Die Anfrage ist abgelaufen oder ungültig: ' + error.message)
     }
+    // Schon einmal zugestimmt: Supabase hat die Anfrage selbst bestätigt und
+    // gibt nur die Rücksprungadresse zurück. Ein zweites «Erlauben» schlüge
+    // mit «no longer pending» fehl.
+    if (!data?.authorization_id && data?.redirect_url) {
+      melde('Schon erlaubt. Weiter zu Claude …')
+      return location.replace(data.redirect_url)
+    }
     const client = data?.client?.name ?? data?.client?.client_name ?? 'Ein unbekannter Client'
     $('wer').textContent = `«${client}» möchte als ${session.user.email} Leads in Atlas lesen und vorschlagen.`
     $('frage').hidden = false
